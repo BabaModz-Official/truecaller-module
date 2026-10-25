@@ -109,6 +109,20 @@ install() {
 					break
 				fi
 
+				PKG_DATA_DIR="/data/data/$PKG_NAME"
+				PKG_DE_DIR="/data/user_de/0/$PKG_NAME"
+				BK_DIR="/data/local/tmp/babamodz_backup_$PKG_NAME"
+
+				if [ -d "$PKG_DATA_DIR" ] && [ ! -d "$BK_DIR" ]; then
+					ui_print "* Conflict detected! Backing up app data..."
+					am force-stop "$PKG_NAME" >/dev/null 2>&1 || :
+					mkdir -p "$BK_DIR/data" "$BK_DIR/de"
+					cp -af "$PKG_DATA_DIR"/. "$BK_DIR/data/" 2>/dev/null || :
+					if [ -d "$PKG_DE_DIR" ]; then
+						cp -af "$PKG_DE_DIR"/. "$BK_DIR/de/" 2>/dev/null || :
+					fi
+				fi
+
 				if [ "$UPDATED_SYSTEM_APP" = true ]; then
 					ui_print "* Uninstalling updated system app..."
 					if ! op=$(pmex uninstall-system-updates "$PKG_NAME" 2>&1); then
@@ -117,7 +131,7 @@ install() {
 						UPDATED_SYSTEM_APP=false
 					fi
 				else
-					ui_print "* Uninstalling user app..."
+					ui_print "* Uninstalling conflicting app..."
 					if ! op=$(pmex uninstall --user 0 "$PKG_NAME"); then
 						ui_print "$op"
 					fi
@@ -171,6 +185,35 @@ if ! op=$(su -M -c mount -o bind "$RVPATH" "$BASEPATH/base.apk" 2>&1); then
 	ui_print "$op"
 fi
 am force-stop "$PKG_NAME"
+
+BK_DIR="/data/local/tmp/babamodz_backup_$PKG_NAME"
+if [ -d "$BK_DIR" ]; then
+	ui_print "* Restoring app data & login session..."
+	am force-stop "$PKG_NAME" >/dev/null 2>&1 || :
+	PKG_UID=$(dumpsys package "$PKG_NAME" 2>&1 | grep -m1 "userId=")
+	PKG_UID=${PKG_UID#*=} PKG_UID=${PKG_UID%% *}
+	if [ -z "$PKG_UID" ]; then
+		PKG_UID=$(dumpsys package "$PKG_NAME" 2>&1 | grep -m1 "uid=")
+		PKG_UID=${PKG_UID#*=} PKG_UID=${PKG_UID%% *}
+	fi
+
+	if [ -n "$PKG_UID" ]; then
+		PKG_DATA_DIR="/data/data/$PKG_NAME"
+		PKG_DE_DIR="/data/user_de/0/$PKG_NAME"
+		mkdir -p "$PKG_DATA_DIR"
+		cp -af "$BK_DIR/data"/. "$PKG_DATA_DIR/" 2>/dev/null || :
+		chown -R "$PKG_UID:$PKG_UID" "$PKG_DATA_DIR" 2>/dev/null || :
+		restorecon -R "$PKG_DATA_DIR" 2>/dev/null || :
+
+		if [ -d "$BK_DIR/de" ] && [ -d "$PKG_DE_DIR" ]; then
+			cp -af "$BK_DIR/de"/. "$PKG_DE_DIR/" 2>/dev/null || :
+			chown -R "$PKG_UID:$PKG_UID" "$PKG_DE_DIR" 2>/dev/null || :
+			restorecon -R "$PKG_DE_DIR" 2>/dev/null || :
+		fi
+		ui_print "* App data restored successfully."
+	fi
+	rm -rf "$BK_DIR"
+fi
 
 ui_print "* Optimizing $PKG_NAME"
 cmd package compile -m speed-profile -f "$PKG_NAME" >/dev/null 2>&1
